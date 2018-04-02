@@ -150,8 +150,14 @@ func lastFoundHandler(writer http.ResponseWriter, request *http.Request) {
 }
 
 func helpHandler(writer http.ResponseWriter, request *http.Request) {
-    fmt.Fprintf(writer, "Supported methods:\n\n/api/height - Get median " +
-                        "height\n/api/heights - Get heights of all pools")
+    fmt.Fprintf(writer, "Supported methods:\n\n" +
+                        "/api - Display this help message\n" +
+                        "/api/height - Get median height\n" +
+                        "/api/heights - Get heights of all pools\n" +
+                        "/api/lastfound - Display the number of minutes " +
+                        "since the last block was found globally\n" +
+                        "/api/forked - Display any forked pools and the " +
+                        "reason for the fork")
 }
 
 func heightHandler(writer http.ResponseWriter, request *http.Request) {
