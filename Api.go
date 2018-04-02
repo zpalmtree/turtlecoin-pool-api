@@ -84,9 +84,69 @@ func runApi() {
     http.HandleFunc("/api/heights", heightsHandler)
     http.HandleFunc("/api/heights/", heightsHandler)
 
+    http.HandleFunc("/api/lastfound", lastFoundHandler)
+    http.HandleFunc("/api/lastfound/", lastFoundHandler)
+
+    http.HandleFunc("/api/forked", forkedHandler)
+    http.HandleFunc("/api/forked/", forkedHandler)
+
     fmt.Println("Server started!")
 
     log.Fatal(http.ListenAndServe(":8080", nil))
+}
+
+func forkedHandler(writer http.ResponseWriter, request *http.Request) {
+    writer.Header().Set("Content-Type", "application/json")
+
+    median := globalInfo.medianHeight
+
+    type PoolInfo struct {
+        Pool    string
+        Reason  string
+        Height  int
+        Median  int
+    }
+
+    type DownedInfo struct {
+        Pools   []PoolInfo
+    }
+
+    downedInfo := DownedInfo{Pools: make([]PoolInfo, 0)}
+
+    for _, v := range globalInfo.pools {
+        if v.height > median + poolMaxDifference ||
+           v.height < median - poolMaxDifference {
+
+            reason := "forked"
+
+            if v.height == 0 {
+                reason = "api"
+            }
+
+            pool := PoolInfo{Pool: v.url, Reason: reason, Height: v.height,
+                             Median: median}
+
+            downedInfo.Pools = append(downedInfo.Pools, pool)
+        }
+    }
+
+    downedJson, err := json.Marshal(downedInfo)
+
+    if err != nil {
+        fmt.Fprintf(writer, "{ \"error\" : \"Failed to convert to json!\" }")
+        return
+    }
+
+    fmt.Fprintf(writer, string(downedJson))
+
+}
+
+func lastFoundHandler(writer http.ResponseWriter, request *http.Request) {
+    writer.Header().Set("Content-Type", "application/json")
+
+    timeSince := int(time.Since(globalInfo.heightLastUpdated).Minutes())
+
+    fmt.Fprintf(writer, "{ \"mins-since-last-block\" : %d }", timeSince)
 }
 
 func helpHandler(writer http.ResponseWriter, request *http.Request) {
