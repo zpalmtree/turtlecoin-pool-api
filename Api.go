@@ -521,9 +521,6 @@ func parseNodeJS(p *PoolInfo) (int, int64, error) {
         return 0, 0, errors.New("Couldn't parse block timestamp")
     }
 
-    str := blockFound[1]
-    blockFound[1] = str[0:len(str) - 3]
-    
     /* Don't overflow on 32 bit */
     unix, err := strconv.ParseInt(blockFound[1], 10, 64)
 
