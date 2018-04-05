@@ -1,10 +1,10 @@
 # turtlecoin-pool-api
 
-Provides an easy to use JSON api for monitoring TurtleCoin mining pools
+Provides an easy to use JSON API for monitoring TurtleCoin mining pools.
 
 ## Prerequisites
 
-* A semi recent version of go. The one provided by the default ubuntu repositories might be too old. You can use the binary distributions from the golang website successfully on ubuntu.
+* A semi recent version of Go. The one provided by the default Gbuntu repositories might be too old. You can use the binary distributions from the Golang website successfully on Ubuntu.
 
 ## Building
 
