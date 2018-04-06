@@ -4,7 +4,7 @@ Provides an easy to use JSON API for monitoring TurtleCoin mining pools.
 
 ## Prerequisites
 
-* A semi recent version of Go. The one provided by the default Gbuntu repositories might be too old. You can use the binary distributions from the Golang website successfully on Ubuntu.
+* The golang compiler - On ubuntu you can install this with `sudo apt-get install golang-go`
 
 ## Building
 
