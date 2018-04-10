@@ -27,7 +27,7 @@ const poolsJSON string = "https://raw.githubusercontent.com/turtlecoin/" +
 const poolMaxDifference int = 5
 
 /* How often we check the pools */
-const poolRefreshRate time.Duration = time.Second * 30
+const poolRefreshRate time.Duration = time.Second * 15
 
 /* The port to listen on */
 const port string = ":8080"
@@ -180,6 +180,7 @@ func heightsHandler(writer http.ResponseWriter, request *http.Request) {
     type PoolHeight struct {
         Pool    string
         Height  int
+        Mode    int
     }
 
     type HeightInfo struct {
@@ -189,7 +190,7 @@ func heightsHandler(writer http.ResponseWriter, request *http.Request) {
     heightInfo := HeightInfo{Pools: make([]PoolHeight, 0)}
 
     for _, v := range globalInfo.pools {
-        pool := PoolHeight{Pool: v.url, Height: v.height}
+        pool := PoolHeight{Pool: v.url, Height: v.height, Mode: globalInfo.modeHeight}
         heightInfo.Pools = append(heightInfo.Pools, pool)
     }
 
