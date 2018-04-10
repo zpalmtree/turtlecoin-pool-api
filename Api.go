@@ -29,6 +29,9 @@ const poolMaxDifference int = 5
 /* How often we check the pools */
 const poolRefreshRate time.Duration = time.Second * 30
 
+/* The port to listen on */
+const port string = ":8080"
+
 /* The data type we parse our json into */
 type Pool struct {
     Url     string `json:"url"`
@@ -76,7 +79,7 @@ func main() {
     go runApi()
 
     sc := make(chan os.Signal, 1)
-	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt, os.Kill)
+    signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt, os.Kill)
     <-sc
 }
 
@@ -98,7 +101,7 @@ func runApi() {
 
     fmt.Println("Server started!")
 
-    log.Fatal(http.ListenAndServe(":8080", nil))
+    log.Fatal(http.ListenAndServe(port, nil))
 }
 
 func forkedHandler(writer http.ResponseWriter, request *http.Request) {
