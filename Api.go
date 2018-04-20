@@ -18,6 +18,7 @@ import (
     "bytes"
     "crypto/tls"
     "log"
+    "math"
 )
 
 const poolsJSON string = "https://raw.githubusercontent.com/turtlecoin/" +
@@ -49,6 +50,7 @@ type PoolsInfo struct {
     pools               []PoolInfo
     modeHeight          int
     heightLastUpdated   time.Time
+    modeDifficulty      int64
 }
 
 /* Info about an individual pool */
@@ -59,6 +61,8 @@ type PoolInfo struct {
     userID              string
     height              int
     timeLastFound       time.Time
+    hashrate            int64
+    difficulty          int64
     poolType            string
 }
 
@@ -74,7 +78,7 @@ func main() {
     }
     
     /* Update the height and pools in the background */
-    go heightWatcher()
+    go statUpdater()
     go poolUpdater()
     go runApi()
 
@@ -147,7 +151,6 @@ func forkedHandler(writer http.ResponseWriter, request *http.Request) {
     }
 
     fmt.Fprintf(writer, string(downedJson))
-
 }
 
 func lastFoundHandler(writer http.ResponseWriter, request *http.Request) {
@@ -178,9 +181,11 @@ func heightsHandler(writer http.ResponseWriter, request *http.Request) {
     writer.Header().Set("Content-Type", "application/json")
     
     type PoolHeight struct {
-        Pool    string
-        Height  int
-        Mode    int
+        Pool                string
+        Height              int
+        Mode                int
+        LastFound           int64
+        EstimatedSolveTime  int64
     }
 
     type HeightInfo struct {
@@ -190,7 +195,23 @@ func heightsHandler(writer http.ResponseWriter, request *http.Request) {
     heightInfo := HeightInfo{Pools: make([]PoolHeight, 0)}
 
     for _, v := range globalInfo.pools {
-        pool := PoolHeight{Pool: v.url, Height: v.height, Mode: globalInfo.modeHeight}
+        var solveTime int64
+
+        /* Don't divide by 0! */
+        if v.hashrate == 0 {
+            solveTime = math.MaxInt64
+        } else {
+            solveTime = globalInfo.modeDifficulty / v.hashrate
+        }
+
+        pool := PoolHeight{
+            Pool: v.url,
+            Height: v.height, 
+            Mode: globalInfo.modeHeight, 
+            LastFound: v.timeLastFound.Unix(),
+            EstimatedSolveTime: solveTime,
+        }
+
         heightInfo.Pools = append(heightInfo.Pools, pool)
     }
 
@@ -233,17 +254,19 @@ func setup() error {
     /* Update the global struct */
     globalInfo.pools = poolInfo
 
-    populateHeights()
-    updatemodeHeight()
+    updatePoolStats()
+    updateModeHeight()
+    updateModeDifficulty()
 
     return nil
 }
 
-func heightWatcher() {
+func statUpdater() {
     for {
         time.Sleep(poolRefreshRate)
-        populateHeights()
-        updatemodeHeight()
+        updatePoolStats()
+        updateModeHeight()
+        updateModeDifficulty()
     }
 }
 
@@ -280,6 +303,8 @@ func poolUpdater() {
                 if p.url == localPool.url {
                     p.height = localPool.height
                     p.timeLastFound = localPool.timeLastFound
+                    p.hashrate = localPool.hashrate
+                    p.difficulty = localPool.difficulty
                     break
                 }
             }
@@ -289,8 +314,8 @@ func poolUpdater() {
 
         /* Update the global struct */
         globalInfo.pools = poolInfo
-        populateHeights()
-        updatemodeHeight()
+        updatePoolStats()
+        updateModeHeight()
     }
 }
 
@@ -304,14 +329,14 @@ func getValues(heights map[string]int) []int {
     return values
 }
 
-func updatemodeHeight() {
-    heights := make([]int, 0)
+func updateModeHeight() {
+    heights := make([]int64, 0)
 
     for _, v := range globalInfo.pools {
-        heights = append(heights, v.height)
+        heights = append(heights, int64(v.height))
     }
 
-    mode := mode(heights)
+    mode := int(mode(heights))
 
     if mode != globalInfo.modeHeight {
         globalInfo.modeHeight = mode
@@ -319,13 +344,23 @@ func updatemodeHeight() {
     }
 }
 
-func mode(a []int) int {
-    m := make(map[int]int)
+func updateModeDifficulty() {
+    diffs := make([]int64, 0)
+
+    for _, v := range globalInfo.pools {
+        diffs = append(diffs, v.difficulty)
+    }
+
+    globalInfo.modeDifficulty = mode(diffs)
+}
+
+func mode(a []int64) int64 {
+    m := make(map[int64]int64)
     for _, v := range a {
         m[v]++
     }
-    var mode []int
-    var n int
+    var mode []int64
+    var n int64
     for k, v := range m {
         switch {
         case v < n:
@@ -340,16 +375,18 @@ func mode(a []int) int {
     return mode[0]
 }
 
-func populateHeights() {
+func updatePoolStats() {
     for index, _ := range globalInfo.pools {
         /* Range takes a copy of the values, we need to directly access */
         v := &globalInfo.pools[index]
 
-        height, unix, err := getPoolHeightAndTimestamp(v)
+        height, unix, hashrate, difficulty, err := getPoolInfo(v)
 
         if err == nil {
             v.height = height
             v.timeLastFound = time.Unix(unix, 0)
+            v.hashrate = hashrate
+            v.difficulty = difficulty
         } else {
             v.height = 0
         }
@@ -427,13 +464,13 @@ func parseHeight(body string, statsURL string) (int, error) {
     return i, nil
 }
 
-func parseForknoteBody(body string, statsURL string) (int, int64, error) {
+func parseForknoteBody(body string, statsURL string) (int, int64, int64, int64, error) {
     blockFoundRegex := regexp.MustCompile(".*\"lastBlockFound\":\"(\\d+)\".*")
     blockFound := blockFoundRegex.FindStringSubmatch(body)
 
     if len(blockFound) < 2 {
         fmt.Println("Failed to parse block last found timestamp from", statsURL)
-        return 0, 0, errors.New("Couldn't parse block timestamp")
+        return 0, 0, 0, 0, errors.New("Couldn't parse block timestamp")
     }
 
     str := blockFound[1]
@@ -444,32 +481,62 @@ func parseForknoteBody(body string, statsURL string) (int, int64, error) {
 
     if err != nil {
         fmt.Println("Failed to convert timestamp into int! Error:", err)
-        return 0, 0, err
+        return 0, 0, 0, 0, err
     }
 
     i, err := parseHeight(body, statsURL)
 
     if err != nil {
-        return 0, 0, err
+        return 0, 0, 0, 0, err
     }
 
-    return i, unix, nil
+    hashrateRegex := regexp.MustCompile(".*\"hashrate\":(\\d+).*")
+    hashrateStr := hashrateRegex.FindStringSubmatch(body)
+
+    if len(hashrateStr) < 2 {
+        fmt.Println("Failed to parse hashrate from", statsURL)
+        return 0, 0, 0, 0, errors.New("Couldn't parse hashrate")
+    }
+
+    hashrate, err := strconv.ParseInt(hashrateStr[1], 10, 64)
+
+    if err != nil {
+        fmt.Println("Failed to convert hashrate into int! Error:", err)
+        return 0, 0, 0, 0, err
+    }
+
+    difficultyRegex := regexp.MustCompile(".*\"network\":{\"difficulty\":(\\d+).*")
+    difficultyStr := difficultyRegex.FindStringSubmatch(body)
+
+    if len(difficultyStr) < 2 {
+        fmt.Println("Failed to parse difficulty from", statsURL)
+        return 0, 0, 0, 0, errors.New("Couldn't parse difficulty")
+    }
+
+    difficulty, err := strconv.ParseInt(difficultyStr[1], 10, 64)
+
+    if err != nil {
+        fmt.Println("Failed to convert difficulty into int! Error:", err)
+        return 0, 0, 0, 0, err
+    }
+
+    return i, unix, hashrate, difficulty, nil
 }
 
-func parseForknote(p *PoolInfo) (int, int64, error) {
+func parseForknote(p *PoolInfo) (int, int64, int64, int64, error) {
     body, err := downloadApiLink(p.api + "stats")
 
     if err != nil {
-        return 0, 0, err
+        return 0, 0, 0, 0, err
     }
 
-    height, unix, err := parseForknoteBody(body, p.api + "stats")
+    height, unix, hashrate, difficulty, err := parseForknoteBody(body, p.api + "stats")
 
     if err != nil {
-        return 0, 0, err
+        return 0, 0, 0, 0, err
     }
 
-    return height, unix, nil
+    return height, unix, hashrate, difficulty, nil
 }
 
 func downloadApiLink(apiURL string) (string, error) {
@@ -501,28 +568,28 @@ func downloadApiLink(apiURL string) (string, error) {
     return string(body), nil
 }
 
-func parseNodeJS(p *PoolInfo) (int, int64, error) {
+func parseNodeJS(p *PoolInfo) (int, int64, int64, int64, error) {
     networkURL := p.api + "network/stats"
     poolURL := p.api + "pool/stats"
 
-    heightBody, err := downloadApiLink(networkURL)
+    networkBody, err := downloadApiLink(networkURL)
 
     if err != nil {
-        return 0, 0, err
+        return 0, 0, 0, 0, err
     }
 
-    timeBody, err := downloadApiLink(poolURL)
+    poolBody, err := downloadApiLink(poolURL)
 
     if err != nil {
-        return 0, 0, err
+        return 0, 0, 0, 0, err
     }
 
     blockFoundRegex := regexp.MustCompile(".*\"lastBlockFoundTime\":(\\d+).*")
-    blockFound := blockFoundRegex.FindStringSubmatch(timeBody)
+    blockFound := blockFoundRegex.FindStringSubmatch(poolBody)
 
     if len(blockFound) < 2 {
         fmt.Println("Failed to parse block last found timestamp from", poolURL)
-        return 0, 0, errors.New("Couldn't parse block timestamp")
+        return 0, 0, 0, 0, errors.New("Couldn't parse block timestamp")
     }
 
     /* Don't overflow on 32 bit */
@@ -530,37 +597,69 @@ func parseNodeJS(p *PoolInfo) (int, int64, error) {
 
     if err != nil {
         fmt.Println("Failed to convert timestamp into int! Error:", err)
-        return 0, 0, err
+        return 0, 0, 0, 0, err
     }
 
-    i, err := parseHeight(heightBody, networkURL)
+    i, err := parseHeight(networkBody, networkURL)
 
     if err != nil {
-        return 0, 0, err
+        return 0, 0, 0, 0, err
     }
 
-    return i, unix, nil
+    hashrateRegex := regexp.MustCompile(".*\"hashRate\":(\\d+).*")
+    hashrateStr := hashrateRegex.FindStringSubmatch(poolBody)
+
+    if len(hashrateStr) < 2 {
+        fmt.Println("Failed to parse hashrate from", poolURL)
+        return 0, 0, 0, 0, errors.New("Couldn't parse hashrate")
+    }
+
+    hashrate, err := strconv.ParseInt(hashrateStr[1], 10, 64)
+
+    if err != nil {
+        fmt.Println("Failed to convert hashrate into int! Error:", err)
+        return 0, 0, 0, 0, err
+    }
+
+    difficultyRegex := regexp.MustCompile(".*\"difficulty\":(\\d+).*")
+    difficultyStr := difficultyRegex.FindStringSubmatch(networkBody)
+
+    if len(difficultyStr) < 2 {
+        fmt.Println("Failed to parse difficulty from", networkURL)
+        return 0, 0, 0, 0, errors.New("Couldn't parse difficulty")
+    }
+
+    difficulty, err := strconv.ParseInt(difficultyStr[1], 10, 64)
+
+    if err != nil {
+        fmt.Println("Failed to convert difficulty into int! Error:", err)
+        return 0, 0, 0, 0, err
+    }
+
+    return i, unix, hashrate, difficulty, nil
 }
 
-func getPoolHeightAndTimestamp (p *PoolInfo) (int, int64, error) {
+func getPoolInfo (p *PoolInfo) (int, int64, int64, int64, error) {
     var height int
     var unix int64
+    var hashrate int64
+    var difficulty int64
     var err error
 
     if p.poolType == "forknote" {
-        height, unix, err = parseForknote(p)
+        height, unix, hashrate, difficulty, err = parseForknote(p)
     } else if p.poolType == "node.js" {
-        height, unix, err = parseNodeJS(p)
+        height, unix, hashrate, difficulty, err = parseNodeJS(p)
     } else {
         fmt.Println("Unknown pool type", p.poolType, "skipping.")
-        return 0, 0, errors.New("Unknown pool type")
+        return 0, 0, 0, 0, errors.New("Unknown pool type")
     }
 
     if err != nil {
-        return 0, 0, err
+        return 0, 0, 0, 0, err
     }
 
-    return height, unix, nil
+    return height, unix, hashrate, difficulty, nil
 }
 
 func getPools() (Pools, error) {
