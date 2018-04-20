@@ -204,11 +204,19 @@ func heightsHandler(writer http.ResponseWriter, request *http.Request) {
             solveTime = globalInfo.modeDifficulty / v.hashrate
         }
 
+        var lastFound int64
+
+        if v.timeLastFound.IsZero() {
+            lastFound = math.MaxInt64
+        } else {
+            lastFound = int64(time.Since(v.timeLastFound).Seconds())
+        }
+
         pool := PoolHeight{
             Pool: v.url,
             Height: v.height, 
             Mode: globalInfo.modeHeight, 
-            LastFound: int64(time.Since(v.timeLastFound).Seconds()),
+            LastFound: lastFound,
             EstimatedSolveTime: solveTime,
         }
 
