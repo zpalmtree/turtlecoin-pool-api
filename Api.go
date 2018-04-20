@@ -208,7 +208,7 @@ func heightsHandler(writer http.ResponseWriter, request *http.Request) {
             Pool: v.url,
             Height: v.height, 
             Mode: globalInfo.modeHeight, 
-            LastFound: v.timeLastFound.Unix(),
+            LastFound: int64(time.Since(v.timeLastFound).Seconds()),
             EstimatedSolveTime: solveTime,
         }
 
