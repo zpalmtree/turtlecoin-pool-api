@@ -364,9 +364,14 @@ func updateModeDifficulty() {
 
 func mode(a []int64) int64 {
     m := make(map[int64]int64)
+
     for _, v := range a {
-        m[v]++
+        /* Skip zero values from api down pools */
+        if v != 0 {
+            m[v]++
+        }
     }
+
     var mode []int64
     var n int64
     for k, v := range m {
